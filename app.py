@@ -3,14 +3,15 @@ import pandas as pd
 import streamlit as st
 
 # ----------------------------
-# Config
+# Configuración general
 # ----------------------------
 st.set_page_config(
     page_title="Dashboard Éxito Laboral | UL",
     layout="wide",
 )
 
-DATA_PATH = "data/perfil_laboral_ul.xlsx"
+# ✅ CASO: el Excel está en la raíz del repo (main)
+DATA_PATH = "base de resultados de Perfil Laboral.xlsx"
 
 YES_SET = {"SI", "SÍ", "Si", "Sí", "YES", "Y"}
 
@@ -18,6 +19,7 @@ YES_SET = {"SI", "SÍ", "Si", "Sí", "YES", "Y"}
 # Helpers
 # ----------------------------
 def to_yes_no(x):
+    """Normaliza valores tipo sí/no a 'SI'/'NO'."""
     if pd.isna(x):
         return None
     s = str(x).strip()
@@ -28,6 +30,7 @@ def parse_salary_midpoint(s):
     Convierte rangos tipo:
       - "De $15,000 a $29,999" -> 22500 aprox.
       - "Más de $100,000" -> 110000 (proxy)
+    Retorna None si no se puede interpretar.
     """
     if pd.isna(s):
         return None
@@ -48,6 +51,12 @@ def parse_salary_midpoint(s):
 
     return None
 
+def safe_unique(df, col):
+    """Devuelve lista ordenada de valores únicos no nulos; [] si no existe columna."""
+    if col not in df.columns:
+        return []
+    return sorted([x for x in df[col].dropna().unique()])
+
 @st.cache_data(show_spinner=False)
 def load_data(path: str) -> pd.DataFrame:
     df = pd.read_excel(path, sheet_name=0)
@@ -64,7 +73,7 @@ def load_data(path: str) -> pd.DataFrame:
         if c in df.columns:
             df[c] = df[c].apply(to_yes_no)
 
-    # Derivado: emprendimiento
+    # Derivado: TieneEmprendimiento
     df["TieneEmprendimiento"] = (
         (df.get("EstatusLaboralActual") == "Tenía/Tengo un emprendimiento")
         | (df.get("EstatusLaboralPrevio") == "Tenía/Tengo un emprendimiento")
@@ -72,7 +81,7 @@ def load_data(path: str) -> pd.DataFrame:
         | (df.get("GiroEmprendimiento").notna())
     )
 
-    # Midpoints de salario (para ordenar)
+    # Midpoint de salario actual (para ordenar / analítica básica)
     df["SalarioActualMid"] = (
         df["RangoSalarialActual"].apply(parse_salary_midpoint)
         if "RangoSalarialActual" in df.columns
@@ -80,11 +89,6 @@ def load_data(path: str) -> pd.DataFrame:
     )
 
     return df
-
-def safe_unique(df, col):
-    if col not in df.columns:
-        return []
-    return sorted([x for x in df[col].dropna().unique()])
 
 def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     st.sidebar.header("Filtros")
@@ -162,12 +166,19 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
 
     out = df.copy()
 
+    # Búsqueda por texto
     if q:
-        out = out[
-            out["Matricula"].astype(str).str.lower().str.contains(q, na=False)
-            | out["Estudiante"].astype(str).str.lower().str.contains(q, na=False)
-        ]
+        if "Matricula" in out.columns and "Estudiante" in out.columns:
+            out = out[
+                out["Matricula"].astype(str).str.lower().str.contains(q, na=False)
+                | out["Estudiante"].astype(str).str.lower().str.contains(q, na=False)
+            ]
+        elif "Estudiante" in out.columns:
+            out = out[out["Estudiante"].astype(str).str.lower().str.contains(q, na=False)]
+        elif "Matricula" in out.columns:
+            out = out[out["Matricula"].astype(str).str.lower().str.contains(q, na=False)]
 
+    # Filtros selectivos
     if trabaja:
         out = out[out["TrabajaActualmente"].isin(trabaja)]
 
@@ -202,7 +213,12 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
 
 def download_csv(df: pd.DataFrame, filename="perfil_laboral_filtrado.csv"):
     csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button("Descargar CSV filtrado", csv, file_name=filename, mime="text/csv")
+    st.download_button(
+        "Descargar CSV filtrado",
+        csv,
+        file_name=filename,
+        mime="text/csv"
+    )
 
 # ----------------------------
 # App
@@ -210,13 +226,15 @@ def download_csv(df: pd.DataFrame, filename="perfil_laboral_filtrado.csv"):
 st.title("Dashboard | Perfil laboral de estudiantes (UL)")
 st.caption("Análisis interactivo de empleabilidad, emprendimiento y búsqueda de empleo.")
 
+# Carga de datos
 try:
     df = load_data(DATA_PATH)
 except FileNotFoundError:
     st.error(
-        f"No encontré el archivo en `{DATA_PATH}`.\n\n"
-        "Crea la carpeta `data/` y sube el Excel con el nombre `perfil_laboral_ul.xlsx` "
-        "o actualiza la variable `DATA_PATH`."
+        f"No encontré el archivo Excel en la raíz del repo con el nombre:\n\n"
+        f"`{DATA_PATH}`\n\n"
+        "✅ Verifica que el archivo esté subido en la pantalla principal del repo (main) "
+        "y que el nombre coincida exactamente (incluyendo espacios y mayúsculas)."
     )
     st.stop()
 
@@ -239,24 +257,34 @@ st.divider()
 
 # Gráficas
 g1, g2, g3 = st.columns(3)
+
 with g1:
     st.subheader("Estatus laboral actual")
-    vc = df_f["EstatusLaboralActual"].fillna("No responde").value_counts()
-    st.bar_chart(vc)
+    if "EstatusLaboralActual" in df_f.columns:
+        vc = df_f["EstatusLaboralActual"].fillna("No responde").value_counts()
+        st.bar_chart(vc)
+    else:
+        st.info("No se encontró la columna `EstatusLaboralActual`.")
 
 with g2:
     st.subheader("Rango salarial actual")
-    vc = df_f["RangoSalarialActual"].fillna("No responde").value_counts()
-    st.bar_chart(vc)
+    if "RangoSalarialActual" in df_f.columns:
+        vc = df_f["RangoSalarialActual"].fillna("No responde").value_counts()
+        st.bar_chart(vc)
+    else:
+        st.info("No se encontró la columna `RangoSalarialActual`.")
 
 with g3:
     st.subheader("Busca trabajo actualmente")
-    vc = df_f["BuscaTrabajoActualmente"].fillna("No responde").value_counts()
-    st.bar_chart(vc)
+    if "BuscaTrabajoActualmente" in df_f.columns:
+        vc = df_f["BuscaTrabajoActualmente"].fillna("No responde").value_counts()
+        st.bar_chart(vc)
+    else:
+        st.info("No se encontró la columna `BuscaTrabajoActualmente`.")
 
 st.divider()
 
-# Tabla
+# Tabla filtrada
 st.subheader("Tabla de estudiantes (filtrada)")
 
 default_cols = [
@@ -269,9 +297,18 @@ default_cols = [
 ]
 
 available_cols = [c for c in default_cols if c in df_f.columns]
-cols_show = st.multiselect("Columnas a mostrar", options=df_f.columns.tolist(), default=available_cols)
 
-sort_col = st.selectbox("Ordenar por", options=["(sin ordenar)", "Estudiante", "Matricula", "SalarioActualMid"])
+cols_show = st.multiselect(
+    "Columnas a mostrar",
+    options=df_f.columns.tolist(),
+    default=available_cols
+)
+
+sort_col = st.selectbox(
+    "Ordenar por",
+    options=["(sin ordenar)", "Estudiante", "Matricula", "SalarioActualMid"]
+)
+
 if sort_col != "(sin ordenar)" and sort_col in df_f.columns:
     df_f = df_f.sort_values(sort_col, ascending=True, na_position="last")
 
