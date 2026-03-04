@@ -10,7 +10,7 @@ st.set_page_config(
     layout="wide",
 )
 
-DATA_PATH = "data/perfil_laboral_ul.xlsx"
+DATA_PATH = "base de resultados de Perfil Laboral.xlsx"
 
 YES_SET = {"SI", "SÍ", "Si", "Sí", "YES", "Y"}
 
